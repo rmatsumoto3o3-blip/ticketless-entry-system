@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body { font-family: sans-serif; text-align: center; padding: 20px; }
+      #video-container { position: relative; max-width: 100%; margin: 0 auto; }
+      video { width: 100%; max-width: 400px; border: 1px solid #ccc; }
+      #result { margin-top: 20px; font-size: 1.2em; font-weight: bold; padding: 10px; border-radius: 5px; }
+      .success { background-color: #d4edda; color: #155724; }
+      .error { background-color: #f8d7da; color: #721c24; }
+      button { padding: 10px 20px; font-size: 1em; margin-top: 10px; cursor: pointer; }
+    </style>
+    <!-- Load jsQR library -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  </head>
+  <body>
+    <h1>Ticket Check-in</h1>
+    <div id="video-container">
+      <video id="video" playsinline></video>
+      <canvas id="canvas" hidden></canvas>
+    </div>
+    <div id="result">Ready to scan...</div>
+    <button onclick="startScan()">Restart Camera</button>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const context = canvas.getContext("2d");
+      const resultDiv = document.getElementById("result");
+      let isScanning = true;
+
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function(stream) {
+        video.srcObject = stream;
+        video.setAttribute("playsinline", true); // required to tell iOS safari we don't want fullscreen
+        video.play();
+        requestAnimationFrame(tick);
+      });
+
+      function tick() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {
+          canvas.height = video.videoHeight;
+          canvas.width = video.videoWidth;
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+
+          if (code) {
+            isScanning = false;
+            resultDiv.innerText = "Verifying...";
+            resultDiv.className = "";
+            
+            // Call GAS backend
+            google.script.run
+              .withSuccessHandler(onCheckInResult)
+              .withFailureHandler(onCheckInError)
+              .checkInUser(code.data);
+          }
+        }
+        if (isScanning) {
+          requestAnimationFrame(tick);
+        }
+      }
+
+      function onCheckInResult(response) {
+        resultDiv.innerText = response.message;
+        resultDiv.className = response.success ? "success" : "error";
+        
+        // Auto-restart scan after 3 seconds if successful, or immediately if user wants
+        setTimeout(() => {
+          if (response.success) startScan();
+        }, 3000);
+      }
+
+      function onCheckInError(error) {
+        resultDiv.innerText = "System Error: " + error.message;
+        resultDiv.className = "error";
+      }
+
+      function startScan() {
+        isScanning = true;
+        resultDiv.innerText = "Scanning...";
+        resultDiv.className = "";
+        requestAnimationFrame(tick);
+      }
+    </script>
+  </body>
+</html>
